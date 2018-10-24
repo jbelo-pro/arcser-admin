@@ -23,8 +23,7 @@ print('Services for transfer {}'.format(len(transfer_services)))
 
 # TODO: It must be  removed . Only for testing
 # map_document_path will set the value transferred to False if there is not a mad doc file
-map_document_path(transfer_services,FOLDER_MAP_DOCUMENTS,
-                  *['.mapx', '.mxd'])
+map_document_path(transfer_services, FOLDER_MAP_DOCUMENTS, *['.mapx', '.mxd'])
 
 subset_transfer_services = [x for x in transfer_services if x.transferred]
 
@@ -43,8 +42,11 @@ for serv in subset_transfer_services:
     os.makedirs(os.path.join(root, serv.qualified_name), exist_ok=True)
 
 print()
+
+# WARNING: ONLY FOR TESTING
 for x in subset_transfer_services:
     x.folder = 'test'
+
 
 print()
 

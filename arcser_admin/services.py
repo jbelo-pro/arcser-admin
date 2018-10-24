@@ -8,9 +8,8 @@ import pandas as pd
 class ServiceProcessException(Exception):
     """ Class to catch errors during service administration """
 
-    def __init__(self, message, errors):
+    def __init__(self, message):
         super().__init__(message)
-        self.errors = errors
 
 
 class ServiceTransporter:
@@ -56,6 +55,15 @@ class ServiceTransporter:
         """
         return [x['typeName'] for x in self.properties['extensions'] if x['enabled'] == 'true']
 
+
+class LayerTypes:
+    THREE_D_LAYER = 0
+    BASEMAP_LAYER = 1
+    FEATURE_LAYER = 2
+    GROUP_LAYER = 3
+    NETWORK_ANALYST_LAYER = 4
+    RASTER_LAYER = 5
+    WEB_LAYER = 6
 
 def create_service_transporter(server, *service_types):
     """ Create dictionary with ServiceTransporter instances from list of services gotten form server
@@ -166,28 +174,59 @@ def import_map_document(arc_proj, *map_docs):
     return maps
 
 
-def change_connection(arcgis_map, source_data, target_data):
-    """ Change the data source connection of each layer in a map. This function only works for layers with database
-    connections
+def change_connection(arcgis_map, target_data, source_data=None):
+    """ Change the data source connection of each layer in a map. This function only works for layers with enterprise
+     database connections. In the other cases the connection will not be changed and the name of the layer will be added
+     to the returned list. In case not source_data is passed the existing one in the layer will be used.
     :param arcgis_map: the map to be processed
     :param source_data: original data source connection
     :param target_data: target data source connection
     :return: list of layers we could not change
     """
-    # WARNING: Review -> http://pro.arcgis.com/en/pro-app/arcpy/mapping/updatingandfixingdatasources.htm
     layers = []
     for layer in arcgis_map.listLayers():
-        if layer.connectionProperties:
-            try:
-                # WARNING: Value for validate should be set to True and we should manage the case where the change is not done
-                layer.updateConnectionProperties(source_data, target_data, True, False)
-            except arcpy.ExecuteWarning as e:
-                print('Geoprocessing Tool error {}'.format(arcpy.GetMessage(1)))
-                layers.append(layer.longName)
-            except arcpy.ExecuteError as e:
-                print('Geoprocessing Tool error {}'.format(arcpy.GetMessage(2)))
-                layers.append(layer.longName)
+        try:
+            if not layer.supports('CONNECTIONPROPERTIES'):
+                raise ServiceProcessException('Layer does not support connection properties')
+            if layer.connectionProperties and layer.connectionProperties['workspace_factory'] == 'SDE':
+                if layer.isBroken:
+                    raise ServiceProcessException('The current connection is not working')
+                if not source_data:
+                    source_data = copy.deepcopy(layer.connectionProperties)
+                    # validate argument is False
+                    result = layer.updateConnectionProperties(source_data, target_data, True, True)
+                    if not result:
+                        raise ServiceProcessException('The database change has not been done. Validation negative')
+            else:
+                cp = layer.connectionProperties['workspace_factory'] if layer.connectionProperties else\
+                    'No Connection Properties'
+                raise ServiceProcessException('Workspace factory is not DBE: {}'.format(cp))
+        except ServiceProcessException as e:
+            print(e)
+            layers.append(layer.longName)
+        except arcpy.ExecuteWarning as e:
+            print('WARNING  error {}'.format(arcpy.GetMessage(2)))
+            layers.append(layer.longName)
+        except arcpy.ExecuteError as e:
+            print('ERROR tool error {}'.format(arcpy.GetMessage(2)))
+            layers.append(layer.longName)
     return layers
+
+
+def acceptable_layer_type(arcgis_map, *acceptable_types):
+
+
+    for l in arcgis_map.listLayers('*'):
+        l.is3DLayer
+        l.isBasemapLayer
+        l.isFeatureLayer
+        l.isGroupLayer
+        l.isNetworkAnalystLayer
+        l.isRasterLayer
+        l.isWebLayer
+
+
+
 
 
 def create_service(arcgis_proj, target_server, list_services):
@@ -240,7 +279,9 @@ def create_service(arcgis_proj, target_server, list_services):
             else:
                 # <editor-fold desc="Stage service">
                 try:
-                    sharing_draft = my_map.getWebLayerSharingDraft('FEDERATED_SERVER', 'MAP_IMAGE', source_service.name)
+                    # WARNING: MODIFY NAME NOW ONLY FOR TESTING
+                    sharing_draft = my_map.getWebLayerSharingDraft('FEDERATED_SERVER', 'MAP_IMAGE',
+                                                                   'TEST_2_' + source_service.name)
                     sharing_draft.credits = source_service.credits
                     sharing_draft.description = source_service.description
                     sharing_draft.copyDataToServer = source_service.copy_data_to_server
@@ -279,24 +320,15 @@ def create_service(arcgis_proj, target_server, list_services):
                     else:
                         # <editor-fold desc="Uploading to server sections">
                         try:
-                            pass
                             result = target_server.services.publish_sd(sd_file, folder=source_service.folder)
                             if not result:
                                 source_service.transferred = False
                                 source_service.transferred_comment = 'Error in publish service definition msg: ' \
                                                                      'Server did not create the service'
-                        except arcpy.ExecuteWarning as e:
-                            source_service.transferred = False
-                            source_service.transferred_comment = 'Warning in publish service definition msg:' \
-                                                                 ' {}'.format(arcpy.GetMessage(1))
-                        except arcpy.ExecuteError as e:
-                            source_service.transferred = False
-                            source_service.transferred_comment = 'Error in publish service definition msg:' \
-                                                                 ' {}'.format(arcpy.GetMessage(2))
                         except Exception as e:
                             source_service.transferred = False
-                            source_service.transferred_comment = 'Error in publish service definition'
-
+                            source_service.transferred_comment = 'Error in publish service definition msg: {}'.format(
+                                str(e))
                         # </editor-fold>
 
 
