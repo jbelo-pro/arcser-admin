@@ -21,12 +21,11 @@ transfer_services = difference_in_service_list(source_service, target_service)
 
 print('Services for transfer {}'.format(len(transfer_services)))
 
-# TODO: It must be  removed . Only for testing
+# WARNING: It must be  removed . Only for testing
 # map_document_path will set the value transferred to False if there is not a mad doc file
 map_document_path(transfer_services, FOLDER_MAP_DOCUMENTS, *['.mapx', '.mxd'])
 
 subset_transfer_services = [x for x in transfer_services if x.transferred]
-
 
 # subset_transfer_services = subset_transfer_services[:15]
 
@@ -41,19 +40,12 @@ for serv in subset_transfer_services:
     serv.sd_file = os.path.join(root, serv.qualified_name, serv.name + '.sd')
     os.makedirs(os.path.join(root, serv.qualified_name), exist_ok=True)
 
-print()
-
 # WARNING: ONLY FOR TESTING
 for x in subset_transfer_services:
     x.folder = 'test'
 
-
-print()
-
 arcgis_proj = arcpy.mp.ArcGISProject(ARCGIS_PROJ)
 
-create_service(arcgis_proj, target_server, subset_transfer_services)
+create_service(arcgis_proj, target_server, subset_transfer_services, dummy_name='TEST_2_')
 
 report_to_csv(transfer_services, REPORT_CSV)
-
-print()

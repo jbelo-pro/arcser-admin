@@ -1,7 +1,7 @@
 import arcpy
 import os
 import copy
-import xml.etree.ElementTree as et
+import xml.dom.minidom as DOM
 import pandas as pd
 
 
@@ -50,20 +50,11 @@ class ServiceTransporter:
 
     @property
     def enabled_extensions(self):
-        """ List with enabled extensions in the service
+        """ List with dictionaries for the extesions in the service
         :return: list with enabled extensions
         """
-        return [x['typeName'] for x in self.properties['extensions'] if x['enabled'] == 'true']
+        return self.properties['extensions']
 
-
-class LayerTypes:
-    THREE_D_LAYER = 0
-    BASEMAP_LAYER = 1
-    FEATURE_LAYER = 2
-    GROUP_LAYER = 3
-    NETWORK_ANALYST_LAYER = 4
-    RASTER_LAYER = 5
-    WEB_LAYER = 6
 
 def create_service_transporter(server, *service_types):
     """ Create dictionary with ServiceTransporter instances from list of services gotten form server
@@ -132,31 +123,6 @@ def process_directory(directory, *file_ext):
     return f
 
 
-def set_sddraft(sddraft_doc, extensions, fs_capabilities='Query,Create,Update,Delete,Uploads,Editing'):
-    """ Modify the sddraft, according to the parameters passed.
-    :param sddraft_doc: path to sddraft file
-    :param extensions: extension we want to enable
-    :param fs_capabilities: capabilities for feature server
-    :return:
-    """
-    tree = et.parse(sddraft_doc)
-    root = tree.getroot()
-
-    for extension in root.iter('SVCExtension'):
-        if extension.find('TypeName').text in extensions:
-            extension.find('Enabled').text = 'true'
-            if extension.find('TypeName').text == 'FeatureServer':
-                for pro in extension.iter('PropertySetProperty'):
-                    if pro.find('Key').text == 'WebCapabilities':
-                        pro.find('Value').text = fs_capabilities
-
-    root = os.path.split(sddraft_doc)[0]
-    file_name = os.path.splitext(os.path.split(sddraft_doc)[1])[0]
-    new_file = os.path.join(root, '{}{}.sddraft'.format(file_name, '_d'))
-    tree.write(new_file)
-    return new_file
-
-
 def import_map_document(arc_proj, *map_docs):
     """ Import maps document in a project. It is recommended to import only one document at a time
     :param arc_proj: arcpy.mp.ArcGISProject instance
@@ -172,6 +138,52 @@ def import_map_document(arc_proj, *map_docs):
         except Exception as e:
             maps.append(map_doc)
     return maps
+
+
+def set_sddraft_extensions(sddraft_doc, list_extensions, **kwargs):
+    """ Modify the sddraft, according to the parameters passed. The method only apply default capabilities and only set
+    enabled to true
+    :param sddraft_doc: path to sddraft file
+    :param list_extensions: list of dictionaries with extensions as got from service.properties
+    :return: Path to the new file. In case not new sddraft path to the previous one is returned
+    """
+    default_cap = {'FeatureServer': 'Query,Create,Update,Delete,Uploads,Editing',
+                   'WMSServer': 'GetCapabilities,GetMap,GetFeatureInfo,GetStyles,GetLegendGraphic,GetSchemaExtension'}
+    default_cap.update(kwargs)
+    doc = DOM.parse(sddraft_doc)
+    changed = False
+
+    for service_ext in list_extensions:
+        if service_ext['enabled'] == 'true' and service_ext['typeName'] in default_cap.keys():
+            changed = True
+            type_names = doc.getElementsByTagName('TypeName')
+            for type_name in type_names:
+                if type_name.firstChild.data == service_ext['typeName']:
+                    extension = type_name.parentNode
+                    for ext_element in extension.childNodes:
+                        if ext_element.tagName == 'Enabled':
+                            ext_element.firstChild.data = 'true'
+                        if ext_element.tagName == 'Info':
+                            for props_array in ext_element.childNodes:
+                                for prop_set in props_array.childNodes:
+                                    for prop in prop_set.childNodes:
+                                        if prop.tagName == 'Key':
+                                            if prop.firstChild.data == 'WebCapabilities':
+                                                if prop.nextSibling.hasChildNodes():
+                                                    prop.nextSibling.firstChild.data = default_cap[service_ext['typeName']]
+                                            if prop.firstChild.data == 'WebEnabled':
+                                                if prop.nextSibling.hasChildNodes():
+                                                    prop.nextSibling.firstChild.data = 'true'
+    if changed:
+        root = os.path.split(sddraft_doc)[0]
+        file_name = os.path.splitext(os.path.split(sddraft_doc)[1])[0]
+        output_file = os.path.join(root, '{}{}.sddraft'.format(file_name, '_d'))
+        f = open(output_file, 'w')
+        doc.writexml(f)
+        f.close()
+        return output_file
+    else:
+        return sddraft_doc
 
 
 def change_connection(arcgis_map, target_data, source_data=None):
@@ -190,31 +202,31 @@ def change_connection(arcgis_map, target_data, source_data=None):
                 raise ServiceProcessException('Layer does not support connection properties')
             if layer.connectionProperties and layer.connectionProperties['workspace_factory'] == 'SDE':
                 if layer.isBroken:
-                    raise ServiceProcessException('The current connection is not working')
+                    raise ServiceProcessException('current connection not working')
                 if not source_data:
                     source_data = copy.deepcopy(layer.connectionProperties)
                     # validate argument is False
                     result = layer.updateConnectionProperties(source_data, target_data, True, True)
                     if not result:
-                        raise ServiceProcessException('The database change has not been done. Validation negative')
+                        raise ServiceProcessException('connection change failed')
             else:
                 cp = layer.connectionProperties['workspace_factory'] if layer.connectionProperties else\
-                    'No Connection Properties'
-                raise ServiceProcessException('Workspace factory is not DBE: {}'.format(cp))
+                    'no connection properties'
+                raise ServiceProcessException('ERROR connection: {}'.format(cp))
         except ServiceProcessException as e:
-            print(e)
-            layers.append(layer.longName)
+            layers.append((layer.longName, str(e)))
         except arcpy.ExecuteWarning as e:
-            print('WARNING  error {}'.format(arcpy.GetMessage(2)))
-            layers.append(layer.longName)
+            layers.append((layer.longName, arcpy.GetMessages()))
         except arcpy.ExecuteError as e:
-            print('ERROR tool error {}'.format(arcpy.GetMessage(2)))
-            layers.append(layer.longName)
+            layers.append((layer.longName, arcpy.GetMessages()))
     return layers
 
 
 def acceptable_layer_type(arcgis_map, *acceptable_types):
-
+    is_acceptable = {'THREE_D': lambda x: x.is3DLayer, 'BASEMAP': lambda x: x.isBasemapLayer,
+                     'FEATURE': lambda x: x.isFeatureLayer, 'GROUP': lambda x: x.isGroupLayer,
+                     'NETWORK': lambda x: x.isNetworkAnalystLayer, 'RASTER': lambda x: x.isRasterLayer,
+                     'WEB': lambda x: x.isWebLayer}
 
     for l in arcgis_map.listLayers('*'):
         l.is3DLayer
@@ -226,10 +238,7 @@ def acceptable_layer_type(arcgis_map, *acceptable_types):
         l.isWebLayer
 
 
-
-
-
-def create_service(arcgis_proj, target_server, list_services):
+def create_service(arcgis_proj, target_server, list_services, **kwargs):
     """ Create services in the target server based on the attributes of the ServiceTransporter. In the case
     FeatureServer is enabled capabilities are 'Query,Create,Update,Delete,Editing,Uploads'. If an error is raised during
     the process the ServiceTransferred.transferred attribute is changed to False and a comment is added
@@ -238,9 +247,8 @@ def create_service(arcgis_proj, target_server, list_services):
     :param list_services: list of ServiceTransporter
     :return: None
     """
-
-    server_type = {'MapServer': 'FEDERATED_SERVER', 'OTHER': 'HOSTING_SERVER'}
-    service_type = {'MapServer': 'MAP_IMAGE', 'OTHER_1': 'FEATURE', 'OTHER_2': 'TILE'}
+    service_conf = {'server_type': 'FEDERATED_SERVER', 'service_type': 'MAP_IMAGE', 'dummy_name': ''}
+    service_conf.update(kwargs)
 
     counter = 0
     for source_service in list_services:
@@ -253,10 +261,10 @@ def create_service(arcgis_proj, target_server, list_services):
             arcgis_proj.save()
         except arcpy.ExecuteWarning as e:
             source_service.transferred = False
-            source_service.transferred_comment = 'Warning importing document msg: {}'.format(arcpy.GetMessage(1))
+            source_service.transferred_comment = 'Warning importing document msg: {}'.format(arcpy.GetMessages())
         except arcpy.ExecuteError as e:
             source_service.transferred = False
-            source_service.transferred_comment = 'Error importing document msg: {}'.format(arcpy.GetMessage(2))
+            source_service.transferred_comment = 'Error importing document msg: {}'.format(arcpy.GetMessages())
         # </editor-fold>
         else:
             # <editor-fold desc="Change data source">
@@ -269,7 +277,10 @@ def create_service(arcgis_proj, target_server, list_services):
                 if source_service.target_data:
                     result = change_connection(my_map, source_service.source_data, source_service.target_data)
                     if result:
-                        raise ServiceProcessException('Raised exception during database connection change')
+                        msg = ''
+                        for r in result:
+                            msg = msg + ' - ' + r[1]
+                        raise ServiceProcessException('ERROR data connection {}'.format(msg.strip()))
                     else:
                         arcgis_proj.save()
             except ServiceProcessException as e:
@@ -279,9 +290,9 @@ def create_service(arcgis_proj, target_server, list_services):
             else:
                 # <editor-fold desc="Stage service">
                 try:
-                    # WARNING: MODIFY NAME NOW ONLY FOR TESTING
-                    sharing_draft = my_map.getWebLayerSharingDraft('FEDERATED_SERVER', 'MAP_IMAGE',
-                                                                   'TEST_2_' + source_service.name)
+                    sharing_draft = my_map.getWebLayerSharingDraft(service_conf['server_type'],
+                                                                   service_conf['service_type'],
+                                                                   service_conf['dummy_name'] + source_service.name)
                     sharing_draft.credits = source_service.credits
                     sharing_draft.description = source_service.description
                     sharing_draft.copyDataToServer = source_service.copy_data_to_server
@@ -290,21 +301,22 @@ def create_service(arcgis_proj, target_server, list_services):
                     sharing_draft.overwriteExistingService = source_service.overwrite_existing_service
                     sharing_draft.tags = source_service.tags
 
-                    # In case we generate the draft offline
+                    # In case we generate the draft offline. If False federatedSServerUrl must be provided
                     sharing_draft.offline = True
 
                     sddraft_file = source_service.sddraft_file
                     sd_file = source_service.sd_file
                     sharing_draft.exportToSDDraft(sddraft_file)
+                    sddraft_file = set_sddraft_extensions(sddraft_file, source_service.enabled_extensions)
 
                 except arcpy.ExecuteWarning as e:
                     source_service.transferred = False
                     source_service.transferred_comment = 'Warning in sddraft creation msg:' \
-                                                         ' {}'.format(arcpy.GetMessage(1))
+                                                         ' {}'.format(arcpy.GetMessages())
                 except arcpy.ExecuteError as e:
                     source_service.transferred = False
                     source_service.transferred_comment = 'Error in sddraft creation msg:' \
-                                                         ' {}'.format(arcpy.GetMessage(2))
+                                                         ' {}'.format(arcpy.GetMessages())
                 # </editor-fold>
                 else:
                     try:
@@ -312,15 +324,16 @@ def create_service(arcgis_proj, target_server, list_services):
                     except arcpy.ExecuteWarning as e:
                         source_service.transferred = False
                         source_service.transferred_comment = 'Warning in stage service msg:' \
-                                                             ' {}'.format(arcpy.GetMessage(1))
+                                                             ' {}'.format(arcpy.GetMessages())
                     except arcpy.ExecuteError as e:
                         source_service.transferred = False
                         source_service.transferred_comment = 'Error in stage service msg:' \
-                                                             ' {}'.format(arcpy.GetMessage(2))
+                                                             ' {}'.format(arcpy.GetMessages())
                     else:
                         # <editor-fold desc="Uploading to server sections">
                         try:
                             result = target_server.services.publish_sd(sd_file, folder=source_service.folder)
+
                             if not result:
                                 source_service.transferred = False
                                 source_service.transferred_comment = 'Error in publish service definition msg: ' \
