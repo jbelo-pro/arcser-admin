@@ -1,4 +1,5 @@
 import arcpy
+import logging
 import os
 import copy
 import xml.dom.minidom as DOM
@@ -60,8 +61,9 @@ def create_service_transporter(server, *service_types):
     """ Create dictionary with ServiceTransporter instances from list of services gotten form server
     :param server: server from we want to get the list of services
     :param service_types: List of service types we want to get from server
+    :return: list of ServiceTransporter
     """
-    ser = {}
+    ser = []
     folders = server.services.folders
     folders = [x if x != '/' else None for x in folders]
     for folder in folders:
@@ -71,19 +73,19 @@ def create_service_transporter(server, *service_types):
                 qualified_name = '{}\{}.{}'.format(folder, service.serviceName, service.type) if folder else\
                     '{}.{}'.format(service.serviceName, service.type)
                 st = ServiceTransporter(qualified_name, copy.deepcopy(service.properties))
-                ser[qualified_name] = st
+                ser.append(st)
     return ser
 
 
 def difference_in_service_list(source_services, target_services):
     """ Return the services in source server but not in target server
-    :param source_services: dictionary of ServerTransporter for source server
-    :param target_services: dictionary of ServerTransporter for target server
+    :param source_services: list of ServerTransporter for source server
+    :param target_services: list of ServerTransporter for target server
     :return: list of ServerTransporter
     """
-
-    d = set(source_services.keys()) - set(target_services.keys())
-    return [source_services[x] for x in source_services.keys() if x in d]
+    diff = set(x.qualified_name for x in source_services) - set(x.qualified_name for x in target_services)
+    source_dict = {x.qualified_name: x for x in source_services}
+    return [source_dict[x] for x in source_dict.keys() if x in diff]
 
 
 def map_document_path(source_services, root, *extensions):
@@ -137,53 +139,85 @@ def import_map_document(arc_proj, *map_docs):
             maps.append(map_doc)
         except Exception as e:
             maps.append(map_doc)
+            logging.error('Map {} has not been imported'.format(map_doc))
     return maps
 
 
-def set_sddraft_extensions(sddraft_doc, list_extensions, **kwargs):
-    """ Modify the sddraft, according to the parameters passed. The method only apply default capabilities and only set
-    enabled to true
+def set_sddraft_extensions(sddraft_doc, properties, *args):
+    """ Modify the sddraft, according to the parameters passed.
     :param sddraft_doc: path to sddraft file
-    :param list_extensions: list of dictionaries with extensions as got from service.properties
+    :param properties: list of dictionaries with extensions as got from service.properties
+    :param fs_capabilities: capabilities for feature server
     :return: Path to the new file. In case not new sddraft path to the previous one is returned
     """
-    default_cap = {'FeatureServer': 'Query,Create,Update,Delete,Uploads,Editing',
-                   'WMSServer': 'GetCapabilities,GetMap,GetFeatureInfo,GetStyles,GetLegendGraphic,GetSchemaExtension'}
-    default_cap.update(kwargs)
-    doc = DOM.parse(sddraft_doc)
-    changed = False
+    accepted_extensions = set(['FeatureServer', 'WMSServer'])
+    accepted_extensions.update(args)
+    excluded_conf_properties = ['cacheDir', 'virtualOutputDir', 'outputDir', 'FilePath',
+                                'virtualCacheDir', 'portalURL']
 
-    for service_ext in list_extensions:
-        if service_ext['enabled'] == 'true' and service_ext['typeName'] in default_cap.keys():
-            changed = True
+    excluded_ext_properties = ['onlineResource']
+    m = {'MaxImageHeight': 'maxImageHeight',
+         'MaxImageWidth': 'maxImageWidth'}
+
+    doc = DOM.parse(sddraft_doc)
+    unmatch = []
+    for service_ext in properties['extensions']:
+        if service_ext['enabled'] == 'true' and service_ext['typeName'] in accepted_extensions:
+            # <editor-fold desc="EXTENSION">
             type_names = doc.getElementsByTagName('TypeName')
             for type_name in type_names:
                 if type_name.firstChild.data == service_ext['typeName']:
                     extension = type_name.parentNode
                     for ext_element in extension.childNodes:
+                        # <editor-fold desc="Enabled - Set the value of Enabled to true or to false ">
                         if ext_element.tagName == 'Enabled':
-                            ext_element.firstChild.data = 'true'
+                            ext_element.firstChild.data = service_ext['enabled']  # 'true'
+                        # </editor-fold>
+                        # <editor-fold desc="Info - Section to set the capabilities and WebEnabled ">
                         if ext_element.tagName == 'Info':
-                            for props_array in ext_element.childNodes:
-                                for prop_set in props_array.childNodes:
-                                    for prop in prop_set.childNodes:
-                                        if prop.tagName == 'Key':
-                                            if prop.firstChild.data == 'WebCapabilities':
-                                                if prop.nextSibling.hasChildNodes():
-                                                    prop.nextSibling.firstChild.data = default_cap[service_ext['typeName']]
-                                            if prop.firstChild.data == 'WebEnabled':
-                                                if prop.nextSibling.hasChildNodes():
-                                                    prop.nextSibling.firstChild.data = 'true'
-    if changed:
-        root = os.path.split(sddraft_doc)[0]
-        file_name = os.path.splitext(os.path.split(sddraft_doc)[1])[0]
-        output_file = os.path.join(root, '{}{}.sddraft'.format(file_name, '_d'))
-        f = open(output_file, 'w')
-        doc.writexml(f)
-        f.close()
-        return output_file
-    else:
-        return sddraft_doc
+                            for property_key in ext_element.getElementsByTagName('Key'):
+                                if property_key.firstChild.data == 'WebCapabilities':
+                                    property_key.nextSibling.firstChild.data = service_ext['capabilities']
+                                elif property_key.firstChild.data == 'WebEnabled':
+                                    property_key.nextSibling.firstChild.data = 'true'
+                        # </editor-fold>
+                        # <editor-fold desc="Properties - section for properties">
+                        if ext_element.tagName == 'Props':
+                            for property_key in ext_element.getElementsByTagName('Key'):
+                                try:
+                                    if property_key.firstChild.data in excluded_ext_properties:
+                                        continue
+                                    if property_key.nextSibling.hasChildNodes():
+                                        property_key.nextSibling.firstChild.data = service_ext['properties'][
+                                            property_key.firstChild.data]
+                                except KeyError as k:
+                                    unmatch.append('Key {} not in properties'.format(property_key.firstChild.data))
+                                    logging.warning('Key {} not in properties'.format(property_key.firstChild.data))
+                        # </editor-fold>
+            # </editor-fold>
+    # <editor-fold des="Change of Configuration Properties">
+    conf_properties = doc.getElementsByTagName('ConfigurationProperties')
+    prop_properties = properties['properties']
+    for property_key in conf_properties[0].getElementsByTagName('Key'):
+        try:
+            if property_key.firstChild.data in excluded_conf_properties:
+                continue
+            if property_key.nextSibling.hasChildNodes():
+                if property_key.firstChild.data in m.keys():
+                    property_key.nextSibling.firstChild.data = prop_properties[m[property_key.firstChild.data]]
+                else:
+                    property_key.nextSibling.firstChild.data = prop_properties[property_key.firstChild.data]
+        except KeyError as k:
+            unmatch.append('Key {} not in properties'.format(property_key.firstChild.data))
+            logging.warning('Key {} not in properties'.format(property_key.firstChild.data))
+    # </editor-fold>
+    root = os.path.split(sddraft_doc)[0]
+    file_name = os.path.splitext(os.path.split(sddraft_doc)[1])[0]
+    output_file = os.path.join(root, '{}{}.sddraft'.format(file_name, '_d'))
+    f = open(output_file, 'w')
+    doc.writexml(f)
+    f.close()
+    return output_file, unmatch
 
 
 def change_connection(arcgis_map, target_data, source_data=None):
@@ -199,19 +233,24 @@ def change_connection(arcgis_map, target_data, source_data=None):
     for layer in arcgis_map.listLayers():
         try:
             if not layer.supports('CONNECTIONPROPERTIES'):
+                logging.warning('Layer {} does not support CONNECTION PROPERTIES'.format(layer.name))
                 raise ServiceProcessException('Layer does not support connection properties')
+
             if layer.connectionProperties and layer.connectionProperties['workspace_factory'] == 'SDE':
                 if layer.isBroken:
+                    logging.warning('Layer {} data connection broken '.format(layer.name))
                     raise ServiceProcessException('current connection not working')
                 if not source_data:
                     source_data = copy.deepcopy(layer.connectionProperties)
                     # validate argument is False
                     result = layer.updateConnectionProperties(source_data, target_data, True, True)
                     if not result:
+                        logging.error('Layer {} connection not changed '.format(layer.name))
                         raise ServiceProcessException('connection change failed')
             else:
                 cp = layer.connectionProperties['workspace_factory'] if layer.connectionProperties else\
                     'no connection properties'
+                logging.error('Layer {} no enterprise database'.format(layer.name))
                 raise ServiceProcessException('ERROR connection: {}'.format(cp))
         except ServiceProcessException as e:
             layers.append((layer.longName, str(e)))
@@ -238,13 +277,14 @@ def acceptable_layer_type(arcgis_map, *acceptable_types):
         l.isWebLayer
 
 
-def create_service(arcgis_proj, target_server, list_services, **kwargs):
-    """ Create services in the target server based on the attributes of the ServiceTransporter. In the case
-    FeatureServer is enabled capabilities are 'Query,Create,Update,Delete,Editing,Uploads'. If an error is raised during
-    the process the ServiceTransferred.transferred attribute is changed to False and a comment is added
+def services_mapserver(arcgis_proj, target_server, list_services, **kwargs):
+    """ Create services in the target server based on the attributes of the ServiceTransporter.
+    If an error is raised during the process the ServiceTransporter.transferred attribute is changed to False and a
+    comment is added.
     :param arcgis_proj: arpy.mp.ArcGISProject instance
     :param target_server: instance of the server where we want to publish the service
     :param list_services: list of ServiceTransporter
+    :param kwargs: service configuration can be changed but so far only the default configuration is supported
     :return: None
     """
     service_conf = {'server_type': 'FEDERATED_SERVER', 'service_type': 'MAP_IMAGE', 'dummy_name': ''}
@@ -253,7 +293,7 @@ def create_service(arcgis_proj, target_server, list_services, **kwargs):
     counter = 0
     for source_service in list_services:
         counter += 1
-        print('Processing {}/{}'.format(counter, len(list_services)))
+        logging.debug('Processing {}/{}'.format(counter, len(list_services)))
         maps_in_project = [x.name for x in arcgis_proj.listMaps('*')]
         # <editor-fold desc="Import document">
         try:
@@ -301,13 +341,12 @@ def create_service(arcgis_proj, target_server, list_services, **kwargs):
                     sharing_draft.overwriteExistingService = source_service.overwrite_existing_service
                     sharing_draft.tags = source_service.tags
 
-                    # In case we generate the draft offline. If False federatedSServerUrl must be provided
                     sharing_draft.offline = True
 
                     sddraft_file = source_service.sddraft_file
                     sd_file = source_service.sd_file
                     sharing_draft.exportToSDDraft(sddraft_file)
-                    sddraft_file = set_sddraft_extensions(sddraft_file, source_service.enabled_extensions)
+                    sddraft_file, unmatch = set_sddraft_extensions(sddraft_file, source_service.properties)
 
                 except arcpy.ExecuteWarning as e:
                     source_service.transferred = False
@@ -354,7 +393,6 @@ def report_to_csv(service_transporters, csv_file):
     v = []
     for t in service_transporters:
         v.append(t.service_overview())
-
     df = pd.DataFrame(v)
     df.to_csv(csv_file, encoding='utf-8', sep='|')
 
