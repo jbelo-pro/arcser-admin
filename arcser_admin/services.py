@@ -57,7 +57,7 @@ class ServiceTransporter:
         pass
 
     def service_overview(self):
-        """ Basic information with the status of the service we want to administrate
+        """ Basic information with the status of the service we want to publish
         :return: dictionary with basic information
         """
         return {'qualified_name': self.qualified_name, 'type': self.type, 'transferred': self.transferred,
@@ -316,7 +316,7 @@ def set_sddraft_geocode(service: STGeocodeService, dummy_name):
 
 
 def custom_sddraft_mapservice(sddraft_doc, properties, *args):
-    """ Modify the sddraft, according to the parameters passed.
+    """ Modify the sddraft, according to the parameters passed. The
     :param sddraft_doc: path to sddraft file
     :param properties: list of dictionaries with extensions as got from service.properties
     :param fs_capabilities: capabilities for feature server
