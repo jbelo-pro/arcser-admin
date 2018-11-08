@@ -2,8 +2,8 @@ import arcgis
 import arcpy
 import os
 import logging
-from arcser_admin.services import create_service_transporter, difference_in_service_list, map_document_path,\
-    services_mapserver, report_to_csv
+from arcser_admin.services import create_service_transporter, difference_in_service_list, service_document_path,\
+    processing_mapservice, report_to_csv, processing_geocode_service
 
 
 PORTAL_SOURCE = ''  # Portal source to copy the data
@@ -12,7 +12,7 @@ PASSWORD_SOURCE = ''  # Password of portal source
 PORTAL_TARGET = ''  # Portal target
 USER_TARGET = ''  # User portal target
 PASSWORD_TARGET = ''  # Password portal target
-MAP_FOLDER_PATH = ''  # Folder where the mxd and mapx are located
+SERVICES_FOLDER_PATH = ''  # Folder where the mxd and mapx are located
 SOURCE_CONNECTION = ''  # Dictionary of the source connection when working with  SDE
 TARGET_CONNECTION = ''  # Dictionary of the target connection  when working with SDE
 WORKSAPCE = ''  # Folder where we the script will create the structure of directories for sd and sddraft files
@@ -20,7 +20,9 @@ ARCGIS_PROJECT = ''  # Path to the arcgis project
 PREFIX_SERVICE_NAME = ''  # Prefix added to the service in case wew want to identify them
 DEFAULT_FOLDER = ''  # Folder where to create the service in the server if we want put all of them in the same folder
 REPORT_OUTPUT = ''  # CSV for report
-
+ROOT_FROM = '' # Original root of loc files
+ROOT_TO = ''  # Target root loc files
+SERVER_CONNECTION_FILE = ''  # Path to server connection file
 
 def main():
 
@@ -35,8 +37,8 @@ def main():
     # </editor-folder>
 
     # <editor-fold desc="Get the list of ServiceTransporter. Only the Mapservers are loaded">
-    source_service = create_service_transporter(source_server, 'MapServer')
-    target_service = create_service_transporter(target_server, 'MapServer')
+    source_service = create_service_transporter(source_server, 'MapServer', 'GeocodeServer')
+    target_service = create_service_transporter(target_server, 'MapServer', 'GeocodeServer')
     # </editor-fold>
 
     # <editor-fold desc="Only the ones no in the target service are selected">
@@ -44,14 +46,19 @@ def main():
     # </editor-fold>
 
     logging.debug('Services for transfer {}'.format(len(transfer_services)))
-
-    map_document_path(transfer_services, MAP_FOLDER_PATH, *['.mapx', '.mxd'])
+    service_document_path([x for x in transfer_services if x.transferred], SERVICES_FOLDER_PATH, *['.mapx', '.mxd', '.loc'])
 
     subset_transfer_services = [x for x in transfer_services if x.transferred]
 
     for serv in subset_transfer_services:
-        serv.source_data = SOURCE_CONNECTION
-        serv.target_data = TARGET_CONNECTION
+        if serv.type == 'GeocodeServer':
+            serv.server_connection_file = SERVER_CONNECTION_FILE
+            serv.from_root = ROOT_FROM
+            serv.to_root = ROOT_TO
+        if serv.type == 'MapServer':
+            # WARNING: change
+            serv.source_data = SOURCE_CONNECTION
+            serv.target_data = TARGET_CONNECTION
 
     root = WORKSAPCE
 
@@ -68,8 +75,18 @@ def main():
 
     arcgis_proj = arcpy.mp.ArcGISProject(ARCGIS_PROJECT)
 
-    services_mapserver(arcgis_proj, target_server, subset_transfer_services, dummy_name=PREFIX_SERVICE_NAME)
-    report_to_csv(transfer_services, REPORT_OUTPUT)
+    counter = 0
+    for s in subset_transfer_services:
+        counter += 1
+        print('Service type {}'.format(s.type))
+        print('Service processed {}/{}'.format(counter, len(subset_transfer_services)))
+
+        if s.type == 'MapServer':
+            processing_mapservice(arcgis_proj, source_server, s, dummy_name=PREFIX_SERVICE_NAME)
+        elif s.type == 'GeocodeServer':
+            processing_geocode_service(s,  dummy_name=PREFIX_SERVICE_NAME)
+    report_to_csv(source_service, REPORT_OUTPUT)
+
 
 
 if __name__ == '__main__':

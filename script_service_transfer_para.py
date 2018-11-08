@@ -1,7 +1,7 @@
 import arcgis
 import arcpy
-from arcser_admin.services import create_service_transporter, difference_in_service_list, map_document_path, \
-    services_mapserver, report_to_csv
+from arcser_admin.services import create_service_transporter, difference_in_service_list, service_document_path, \
+    processing_mapservice, report_to_csv
 from arcser_admin.helpers import slicer
 import tempfile
 import shutil
@@ -16,7 +16,7 @@ PASSWORD_SOURCE = ''  # Password of portal source
 PORTAL_TARGET = ''  # Portal target
 USER_TARGET = ''  # User portal target
 PASSWORD_TARGET = ''  # Password portal target
-MAP_FOLDER_PATH = ''  # Folder where the mxd and mapx are located
+SERVICES_FOLDER_PATH = ''  # Folder where the mxd and mapx are located
 SOURCE_CONNECTION = ''  # Dictionary of the source connection when working with  SDE
 TARGET_CONNECTION = ''  # Dictionary of the target connection  when working with SDE
 WORKSAPCE = ''  # Folder where we the script will create the structure of directories for sd and sddraft files
@@ -32,7 +32,8 @@ def create_service_dec(project, portal, user, password, slice_):
         arcgis_proj = arcpy.mp.ArcGISProject(project)
         my_gis = arcgis.GIS(portal, user, password)
         server = my_gis.admin.servers.list()[0]
-        services_mapserver(arcgis_proj, server, slice_)
+        for s in slice_:
+            processing_mapservice(arcgis_proj, server, s)
 
 
 def main():
@@ -50,7 +51,7 @@ def main():
 
     logging.debug('Services for transfer {}'.format(len(transfer_services)))
 
-    map_document_path(transfer_services, MAP_FOLDER_PATH, *['.mapx', '.mxd'])
+    service_document_path(transfer_services, SERVICES_FOLDER_PATH, *['.mapx', '.mxd'])
 
     subset_transfer_services = [x for x in transfer_services if x.transferred]
 
