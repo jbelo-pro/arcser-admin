@@ -235,6 +235,8 @@ def regular_dict(from_elem, to_elem):
                 regular_dict(value, a)
             else:
                 to_elem.append(value)
+    else:
+        raise ValueError('Type passed as argument is not supported')
 
 
 def set_location_file(loc_file, replace_from, replace_to):
