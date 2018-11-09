@@ -19,8 +19,8 @@ class ServiceTransporter:
 
     def __init__(self, qualified_name, properties):
         """
-        :param qualified_name: name of the service including the folder and service type
-        e.g. folder_name\service_name.service_type
+        :param qualified_name: name of the service including the folder and service type.
+        path system e.g. folder_name\service_name.service_type
         :param properties: dictionary from service.properties
         """
         self.__qualified_name = qualified_name
@@ -112,12 +112,11 @@ def create_service_transporter(server, *service_types):
     """
     ser = []
     folders = server.services.folders
-    folders = [x if x != '/' else None for x in folders]
     for folder in folders:
         services = server.services.list(folder, True)
         for service in services:
             if service.type in service_types:
-                qualified_name = '{}\{}.{}'.format(folder, service.serviceName, service.type) if folder else\
+                qualified_name = '{}\\{}.{}'.format(folder, service.serviceName, service.type) if folder != '/' else\
                     '{}.{}'.format(service.serviceName, service.type)
                 new_properties = dict()
                 regular_dict(copy.deepcopy(service.properties), new_properties)

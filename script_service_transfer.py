@@ -6,29 +6,33 @@ from arcser_admin.services import create_service_transporter, difference_in_serv
     processing_mapservice, report_to_csv, processing_geocode_service
 
 
-PORTAL_SOURCE = ''  # Portal source to copy the data
-USER_SOURCE = ''  # User of portal source
-PASSWORD_SOURCE = ''  # Password of portal source
-PORTAL_TARGET = ''  # Portal target
-USER_TARGET = ''  # User portal target
-PASSWORD_TARGET = ''  # Password portal target
-SERVICES_FOLDER_PATH = ''  # Folder where the mxd and mapx are located
-SOURCE_CONNECTION = ''  # Dictionary of the source connection when working with  SDE
-TARGET_CONNECTION = ''  # Dictionary of the target connection  when working with SDE
-WORKSAPCE = ''  # Folder where we the script will create the structure of directories for sd and sddraft files
-ARCGIS_PROJECT = ''  # Path to the arcgis project
-PREFIX_SERVICE_NAME = ''  # Prefix added to the service in case wew want to identify them
-DEFAULT_FOLDER = ''  # Folder where to create the service in the server if we want put all of them in the same folder
-REPORT_OUTPUT = ''  # CSV for report
-ROOT_FROM = '' # Original root of loc files
-ROOT_TO = ''  # Target root loc files
-SERVER_CONNECTION_FILE = ''  # Path to server connection file
-
-def main():
+def main(portal_source, user_source, password_source, portal_target, user_target, password_target, services_folder_path,
+         source_connection, target_connection, worksapce, arcgis_project, prefix_service_name, default_folder,
+         report_output, root_from, root_to, server_connection_file):
+    """
+    :param portal_source: portal source to copy the data
+    :param user_source: user of portal source
+    :param password_source: password of portal source
+    :param portal_target: portal target
+    :param user_target: user portal target
+    :param password_target: password portal target
+    :param services_folder_path: folder where the mxd and mapx are located
+    :param source_connection: dictionary of the source connection when working with  sde
+    :param target_connection: dictionary of the target connection  when working with sde
+    :param worksapce: folder where we the script will create the structure of directories for sd and sddraft files
+    :param arcgis_project: path to the arcgis project
+    :param prefix_service_name: prefix added to the service in case wew want to identify them
+    :param default_folder: folder where to create the service in the server if we want put all of them in the same folder
+    :param report_output: csv for report
+    :param root_from: original root of loc files
+    :param root_to: target root loc files
+    :param server_connection_file: path to server connection file
+    :return:
+    """
 
     # <editor-fold desc="Creation of the arcgis.GIS instances">
-    source_gis = arcgis.gis.GIS(PORTAL_SOURCE, USER_SOURCE, PASSWORD_SOURCE)
-    target_gis = arcgis.gis.GIS(PORTAL_TARGET, USER_TARGET, PASSWORD_TARGET)
+    source_gis = arcgis.gis.GIS(portal_source, user_source, password_source)
+    target_gis = arcgis.gis.GIS(portal_target, user_target, password_target)
     # </editor-fold>
 
     # <editor-fold desc="Getting the servers
@@ -46,21 +50,20 @@ def main():
     # </editor-fold>
 
     logging.debug('Services for transfer {}'.format(len(transfer_services)))
-    service_document_path([x for x in transfer_services if x.transferred], SERVICES_FOLDER_PATH, *['.mapx', '.mxd', '.loc'])
+    service_document_path([x for x in transfer_services if x.transferred], services_folder_path, *['.mapx', '.mxd', '.loc'])
 
     subset_transfer_services = [x for x in transfer_services if x.transferred]
 
     for serv in subset_transfer_services:
         if serv.type == 'GeocodeServer':
-            serv.server_connection_file = SERVER_CONNECTION_FILE
-            serv.from_root = ROOT_FROM
-            serv.to_root = ROOT_TO
+            serv.server_connection_file = server_connection_file
+            serv.from_root = root_from
+            serv.to_root = root_to
         if serv.type == 'MapServer':
-            # WARNING: change
-            serv.source_data = SOURCE_CONNECTION
-            serv.target_data = TARGET_CONNECTION
+            serv.source_data = source_connection
+            serv.target_data = target_connection
 
-    root = WORKSAPCE
+    root = worksapce
 
     # <editor-fold desc="Creation of directories">
     for serv in subset_transfer_services:
@@ -69,11 +72,11 @@ def main():
         os.makedirs(os.path.join(root, serv.qualified_name), exist_ok=True)
     # </editor-fold>
 
-    if DEFAULT_FOLDER:
+    if default_folder:
         for x in subset_transfer_services:
-            x.folder = DEFAULT_FOLDER
+            x.folder = default_folder
 
-    arcgis_proj = arcpy.mp.ArcGISProject(ARCGIS_PROJECT)
+    arcgis_proj = arcpy.mp.ArcGISProject(arcgis_project)
 
     counter = 0
     for s in subset_transfer_services:
@@ -82,12 +85,28 @@ def main():
         print('Service processed {}/{}'.format(counter, len(subset_transfer_services)))
 
         if s.type == 'MapServer':
-            processing_mapservice(arcgis_proj, source_server, s, dummy_name=PREFIX_SERVICE_NAME)
+            processing_mapservice(arcgis_proj, source_server, s, dummy_name=prefix_service_name)
         elif s.type == 'GeocodeServer':
-            processing_geocode_service(s,  dummy_name=PREFIX_SERVICE_NAME)
-    report_to_csv(source_service, REPORT_OUTPUT)
-
+            processing_geocode_service(s,  dummy_name=prefix_service_name)
+    report_to_csv(source_service, report_output)
 
 
 if __name__ == '__main__':
-    main()
+    main(portal_source='',
+         user_source='',
+         password_source='',
+         portal_target='',
+         user_target='',
+         password_target='',
+         services_folder_path='',
+         source_connection='',
+         target_connection='',
+         worksapce='',
+         arcgis_project='',
+         prefix_service_name='',
+         default_folder='',
+         report_output='',
+         root_from='',
+         root_to='',
+         server_connection_file='')
+
