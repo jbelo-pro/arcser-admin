@@ -12,7 +12,7 @@ from test_global_variables import CONNECTIONS
 
 def main(portal_source, user_source, password_source, portal_target, user_target, password_target, services_folder_path,
          source_connection, target_connection, workspace, arcgis_project, prefix_service_name, default_folder,
-         report_output, root_from, root_to, server_connection_file, list_service_to_copy ):
+         report_output, root_from, root_to, server_connection_file, list_service_to_copy, delete):
     """
     :param portal_source: Portal source to copy the data
     :param user_source: User of portal source
@@ -39,6 +39,12 @@ def main(portal_source, user_source, password_source, portal_target, user_target
                                         names=['service_name'])
     service_for_copy = [x for x in service_df['service_name']]
 
+    # reference to portal we wnat to use
+    result = arcpy.SignInToPortal(portal_url='https://dfs-arcgis-71.dpkodev.un.org/arcgis', username='jbelo01',
+                         password='Abcd1234')
+
+    print(result)
+
     # <editor-fold desc="Creation of the arcgis.GIS instances">
     source_gis = arcgis.gis.GIS(portal_source, user_source, password_source)
     target_gis = arcgis.gis.GIS(portal_target, user_target, password_target)
@@ -53,7 +59,7 @@ def main(portal_source, user_source, password_source, portal_target, user_target
     source_service = create_service_transporter(source_server, 'MapServer', 'GeocodeServer')
     # </editor-fold>
 
-    # <editor-fold desc="Check if the services in the source are are there">
+    # <editor-fold desc="Check if the service in the source are there">
     for s in source_service:
         if s.qualified_name.replace('\\', '/') not in service_for_copy:
             s.transferred = False
@@ -61,18 +67,17 @@ def main(portal_source, user_source, password_source, portal_target, user_target
 
     # <editor-fold desc="Delete the services we have in the target server">
     folders = target_server.services.folders
-    for folder in folders:
-        for s1 in target_server.services.list(folder, True):
-            sn = '{}/{}.{}'.format(folder, s1.serviceName, s1.type) if folder != '/' else\
-                '{}.{}'.format(s1.serviceName, s1.type)
-            a.add(sn)
-            if sn in service_for_copy:
-                print('{} is in '.format(sn))
-                # s1.delete()
+    if delete:
+        for folder in folders:
+            for s1 in target_server.services.list(folder, True):
+                sn = '{}/{}.{}'.format(folder, s1.serviceName, s1.type) if folder != '/' else\
+                    '{}.{}'.format(s1.serviceName, s1.type)
+                if sn in service_for_copy:
+                    print('{} is in '.format(sn))
+                    # s1.delete()
     # </editor-fold>
 
     service_document_path([x for x in source_service if x.transferred], services_folder_path, *['.mapx', '.mxd', '.loc'])
-
     subset_transfer_services = [x for x in source_service if x.transferred]
 
     for serv in subset_transfer_services:
@@ -83,6 +88,7 @@ def main(portal_source, user_source, password_source, portal_target, user_target
         if serv.type == 'MapServer':
             serv.source_data = source_connection
             serv.target_data = target_connection
+            serv.federated_server = 'https://dfs-arcgis-71.dpkodev.un.org:6443/arcgis'
 
     root = workspace
 
@@ -102,11 +108,11 @@ def main(portal_source, user_source, password_source, portal_target, user_target
     counter = 0
     for s in subset_transfer_services:
         counter += 1
-        print('Service type {}'.format(s.type))
+        print('Service {} type {}'.format(s.qualified_name, s.type))
         print('Service processed {}/{}'.format(counter, len(subset_transfer_services)))
-
+        print('')
         if s.type == 'MapServer':
-            processing_mapservice(arcgis_proj, source_server, s, dummy_name=prefix_service_name)
+            processing_mapservice(arcgis_proj, s, dummy_name=prefix_service_name)
         elif s.type == 'GeocodeServer':
             processing_geocode_service(s,  dummy_name=prefix_service_name)
     report_to_csv(source_service, report_output)
@@ -124,10 +130,11 @@ if __name__ == '__main__':
          target_connection=CONNECTIONS['DEV'],
          workspace=r'D:\workspace\services_uat_to_dev\FOLDER_SD',
          arcgis_project=r'D:\workspace\services_uat_to_dev\uat_to_dev\uat_to_dev.aprx',
-         prefix_service_name=None,
-         default_folder=None,
-         report_output=r'D:\workspace\services_uat_to_dev\output_report.csv',
-         root_from='',
-         root_to='D:\workspace\services_uat_to_dev\COPY_UAT',
-         server_connection_file='D:\workspace\server_connection_file\DEV_SERVER.ags',
-         list_service_to_copy='D:\workspace\services_uat_to_dev\control_task_services.csv')
+         prefix_service_name='TEST_W_',
+         default_folder='test',
+         report_output='D:\\workspace\\services_uat_to_dev\\output_report.csv',
+         root_from='\\\\dfs-isilon-01.dpko.un.org\\DFS-GIS-02_CIFS2\\uat_ags\\arcgisserver\\directories\\arcgissystem\\arcgisinput',
+         root_to='D:\\workspace\\services_uat_to_dev\\COPY_UAT',
+         server_connection_file='D:\\workspace\\server_connection_file\\DEV_SERVER.ags',
+         list_service_to_copy='D:\\workspace\\services_uat_to_dev\\control_task_services.csv',
+         delete=False)

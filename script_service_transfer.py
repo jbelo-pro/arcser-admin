@@ -85,7 +85,7 @@ def main(portal_source, user_source, password_source, portal_target, user_target
         print('Service processed {}/{}'.format(counter, len(subset_transfer_services)))
 
         if s.type == 'MapServer':
-            processing_mapservice(arcgis_proj, source_server, s, dummy_name=prefix_service_name)
+            processing_mapservice(arcgis_proj, dummy_name=prefix_service_name)
         elif s.type == 'GeocodeServer':
             processing_geocode_service(s,  dummy_name=prefix_service_name)
     report_to_csv(source_service, report_output)

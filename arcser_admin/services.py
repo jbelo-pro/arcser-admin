@@ -28,7 +28,7 @@ class ServiceTransporter:
         self.properties = properties
         self.transferred = True
         self.transferred_comment = None
-        self.copy_data_to_server = True
+        self.copy_data_to_server = False
         self.overwrite_existing_service = False
         self.credits = 'No credits'
         self.sd_file = None
@@ -77,6 +77,7 @@ class STMapService(ServiceTransporter):
         self.map_doc_path = None
         self.source_data = None
         self.target_data = None
+        self.federated_server = None
 
     @property
     def enabled_extensions(self):
@@ -99,6 +100,19 @@ class STGeocodeService(ServiceTransporter):
         self.server_connection_file = None
         self.from_root = None
         self.to_root = None
+
+
+class STGeoprocessingService(ServiceTransporter):
+
+    def __init__(self, qualified_name, properties):
+        """
+        :param qualified_name: name of the service including the folder and service type
+        e.g. folder_name\service_name.service_type
+        :param properties: dictionary from service.properties
+        """
+        super(STGeoprocessingService, self).__init__(qualified_name, properties)
+        self.result_files = None
+        self.server_connection_file = None
 
 
 def create_service_transporter(server, *service_types):
@@ -276,6 +290,50 @@ def publish_geocode_service(service: STGeocodeService):
             raise ServiceProcessException('Upload service error: {}'.format(arcpy.GetMessages(2)))
 
 
+def set_sddraft_groprocessing(service: STGeoprocessingService):
+
+    # Create service definition draft
+    arcpy.CreateGPSDDraft(
+        result=service.result_files,
+        out_sddraft= service.sddraft_file,
+        service_name= service.name,
+        server_type='FROM_CONNECTION_FILE',
+        connection_file_path=service.server_connection_file,
+        copy_data_to_server=True,
+        folder_name=service.folder,
+        summary=service.description,
+        tags=service.tags,
+        executionType="Synchronous", #TODO: review if this value can be gotten for properties
+        resultMapServer=False, # TODO: Check if this value can be gotten from properties
+        showMessages="INFO", # TODO: Check if this value can be gooten from properties
+        maximumRecords=5000, # TODO:  Check if this value can be gotten from properties
+        minInstances=2, # TODO: Check if can be gotten from properties
+        maxInstances=3, # TODO: Check if can be gotten from properties
+        maxUsageTime=100, # TODO: Check if can be gotten from properties
+        maxWaitTime=10,  # TODO: check if can be gotten form properties
+        maxIdleTime=180) # TODO:  check if can be gotten from properties
+
+    # Analyze the service definition draft
+    # TODO: The sample in esri web is wrong, create gps draft return a dictionary with errors warnings etc
+    # analyzeMessages = arcpy.mapping.AnalyzeForSD(sddraft)
+
+    # Stage and upload the service if the sddraft analysis did not
+    # contain errors
+    # if analyzeMessages['errors'] == {}:
+      #  pass
+        # Execute StageService
+        # arcpy.StageService_server(sddraft, sd)
+        # Execute UploadServiceDefinition
+        # Note; alternatively the URL to a federated server can be used, otherwise
+        # 'My Hosted Services' keyword indicates to publish to the default hosting server
+        # arcpy.UploadServiceDefinition_server(sd, "My Hosted Service")
+    # else:
+       # pass
+
+
+
+
+
 def set_sddraft_geocode(service: STGeocodeService, dummy_name):
     """ Create the sddraft for geocode service. If some error is reported the an exception is raised. An issue in
     arcpy.CreateGeocodeSDDraft has been found when SUGGEST is included in supported operations. So far only GEOCODE and
@@ -286,15 +344,21 @@ def set_sddraft_geocode(service: STGeocodeService, dummy_name):
     :raise: ServiceProcessException exception in case some an error is reported in the sddraf creation
     """
 
-    capa = {'Geocode': 'GEOCODE', 'ReverseGeocode': 'REVERSE_GEOCODE', 'Suggest': 'SUGGEST'}
     # WARNING: The sddraf is not created if we pass the SUGGEST value, ValueError exception is raised
-    capa = {'Geocode': 'GEOCODE', 'ReverseGeocode': 'REVERSE_GEOCODE'}
+    capa = {'Geocode': 'GEOCODE', 'ReverseGeocode': 'REVERSE_GEOCODE', 'Suggest': 'SUGGEST'}
+
 
     if len(service.loc_file_path) > 1:
         # Change the path of the locators in the composite
         set_location_file(service.loc_file_path[0], service.from_root, service.to_root)
 
-    capabilities = [capa[x] for x in service.properties['capabilities'].split(',') if x in capa]
+    with open(service.loc_file_path[0], 'r') as f:
+        fr = f.read()
+        print('')
+
+    # Warning: do not use till the problem with USGGEST value is fixed. Now use default values
+    # capabilities = [capa[x] for x in service.properties['capabilities'].split(',') if x in capa]
+
     result = arcpy.CreateGeocodeSDDraft(loc_path=service.loc_file_path[0],
                                         out_sddraft=service.sddraft_file,
                                         service_name=dummy_name + service.name,
@@ -306,8 +370,7 @@ def set_sddraft_geocode(service: STGeocodeService, dummy_name):
                                         tags=service.tags,
                                         max_result_size=int(service.properties['properties']['maxresultsize']),
                                         max_batch_size=int(service.properties['properties']['maxbatchsize']),
-                                        suggested_batch_size=int(service.properties['properties']['suggestedbatchsize']),
-                                        supported_operations=capabilities)
+                                        suggested_batch_size=int(service.properties['properties']['suggestedbatchsize']))
 
     if result['errors']:
         # If the sddraft analysis contained errors, display them
@@ -388,30 +451,42 @@ def custom_sddraft_mapservice(sddraft_doc, properties, *args):
     return output_file, unmatch
 
 
-def change_connection(arcgis_map, target_data, source_data=None):
+def change_connection(arcgis_map, target_connection, source_connection=None):
     """ Change the data source connection of each layer in a map. This function only works for layers with enterprise
      database connections. In the other cases the connection will not be changed and the name of the layer will be added
      to the returned list. In case not source_data is passed the existing one in the layer will be used.
     :param arcgis_map: the map to be processed
-    :param source_data: original data source connection
-    :param target_data: target data source connection
+    :param source_connection: original data source connection
+    :param target_connection: target data source connection
     :return: list of layers we could not change
     """
     layers = []
+
     for layer in arcgis_map.listLayers():
         try:
+            if layer.isGroupLayer:
+                continue
+
             if not layer.supports('CONNECTIONPROPERTIES'):
                 logging.warning('Layer {} does not support CONNECTION PROPERTIES'.format(layer.name))
                 raise ServiceProcessException('Layer does not support connection properties')
 
             if layer.connectionProperties and layer.connectionProperties['workspace_factory'] == 'SDE':
-                if not source_data:
-                    source_data = copy.deepcopy(layer.connectionProperties)
-                    # validate argument is False
-                    result = layer.updateConnectionProperties(source_data, target_data, True, True)
-                    if not result:
-                        logging.error('Layer {} connection not changed '.format(layer.name))
-                        raise ServiceProcessException('connection change failed')
+
+                copy_properties = copy.deepcopy(layer.connectionProperties)
+                copy_target_connection = copy.deepcopy(target_connection)
+                copy_target_connection['connection_info']['database'] = layer.connectionProperties['connection_info']['database']
+                copy_target_connection['connection_info']['version'] = layer.connectionProperties['connection_info']['version']
+                copy_properties['connection_info'] = copy_target_connection['connection_info']
+
+                print(layer.connectionProperties)
+                # TODO: Check if the change has been done. If it has not been changed the service could be created uploading the
+                # data to the server of the validation of the data connection. If the connection has not been created
+                # TODO: The function only supports connectionProperties with not relations. We need to implement the process
+                layer.updateConnectionProperties(layer.connectionProperties, copy_properties, True, True)
+
+                print(layer.connectionProperties)
+                print('')
             else:
                 cp = layer.connectionProperties['workspace_factory'] if layer.connectionProperties else\
                     'no connection properties'
@@ -420,9 +495,9 @@ def change_connection(arcgis_map, target_data, source_data=None):
         except ServiceProcessException as e:
             layers.append((layer.longName, str(e)))
         except arcpy.ExecuteWarning as e:
-            layers.append((layer.longName, arcpy.GetMessages()))
+            layers.append((layer.longName, arcpy.GetMessages(2)))
         except arcpy.ExecuteError as e:
-            layers.append((layer.longName, arcpy.GetMessages()))
+            layers.append((layer.longName, arcpy.GetMessages(2)))
     return layers
 
 
@@ -478,12 +553,11 @@ def processing_geocode_service(service: STGeocodeService, dummy_name=''):
             service.transferred_comment = str(e)
 
 
-def processing_mapservice(arcgis_proj, target_server, source_service, **kwargs):
+def processing_mapservice(arcgis_proj, source_service, **kwargs):
     """ Create services in the target server based on the attributes of the ServiceTransporter.
     If an error is raised during the process the ServiceTransporter.transferred attribute is changed to False and a
     comment is added.
     :param arcgis_proj: arpy.mp.ArcGISProject instance
-    :param target_server: instance of the server where we want to publish the service
     :param list_services: list of ServiceTransporter
     :param kwargs: service configuration can be changed but so far only the default configuration is supported
     :return: None
@@ -512,7 +586,7 @@ def processing_mapservice(arcgis_proj, target_server, source_service, **kwargs):
                 break
         try:
             if source_service.target_data:
-                result = change_connection(my_map, source_service.source_data, source_service.target_data)
+                result = change_connection(my_map, source_service.target_data, source_service.source_data)
                 if result:
                     msg = ''
                     for r in result:
@@ -530,29 +604,35 @@ def processing_mapservice(arcgis_proj, target_server, source_service, **kwargs):
                 sharing_draft = my_map.getWebLayerSharingDraft(service_conf['server_type'],
                                                                service_conf['service_type'],
                                                                service_conf['dummy_name'] + source_service.name)
+                # TODO: Check if there are errors message, if errors then we shoule try to fix then or raise an exception
+                # TODO: Check the specific error for upload the data to the server
+
+                sharing_draft.federatedServerUrl = source_service.federated_server
+                sharing_draft.offline = False
+
                 sharing_draft.credits = source_service.credits
                 sharing_draft.description = source_service.description
-                sharing_draft.copyDataToServer = source_service.copy_data_to_server
+                sharing_draft.copyDataToServer = False # source_service.copy_data_to_server
                 if source_service.folder:
                     sharing_draft.portalFolder = source_service.folder
+                    sharing_draft.serverFolder = source_service.folder
                 sharing_draft.overwriteExistingService = source_service.overwrite_existing_service
                 sharing_draft.tags = source_service.tags
 
-                sharing_draft.offline = True
-
                 sddraft_file = source_service.sddraft_file
                 sd_file = source_service.sd_file
+
                 sharing_draft.exportToSDDraft(sddraft_file)
                 sddraft_file, unmatch = custom_sddraft_mapservice(sddraft_file, source_service.properties)
 
             except arcpy.ExecuteWarning as e:
                 source_service.transferred = False
                 source_service.transferred_comment = 'Warning in sddraft creation msg:' \
-                                                     ' {}'.format(arcpy.GetMessages())
+                                                     ' {}'.format(arcpy.GetMessages(2))
             except arcpy.ExecuteError as e:
                 source_service.transferred = False
                 source_service.transferred_comment = 'Error in sddraft creation msg:' \
-                                                     ' {}'.format(arcpy.GetMessages())
+                                                     ' {}'.format(arcpy.GetMessages(2))
             # </editor-fold>
             else:
                 try:
@@ -560,24 +640,21 @@ def processing_mapservice(arcgis_proj, target_server, source_service, **kwargs):
                 except arcpy.ExecuteWarning as e:
                     source_service.transferred = False
                     source_service.transferred_comment = 'Warning in stage service msg:' \
-                                                         ' {}'.format(arcpy.GetMessages())
+                                                         ' {}'.format(arcpy.GetMessages(2))
                 except arcpy.ExecuteError as e:
                     source_service.transferred = False
                     source_service.transferred_comment = 'Error in stage service msg:' \
-                                                         ' {}'.format(arcpy.GetMessages())
+                                                         ' {}'.format(arcpy.GetMessages(2))
                 else:
                     # <editor-fold desc="Uploading to server sections">
                     try:
-                        result = target_server.services.publish_sd(sd_file, folder=source_service.folder)
-
-                        if not result:
-                            source_service.transferred = False
-                            source_service.transferred_comment = 'Error in publish service definition msg: ' \
-                                                                 'Server did not create the service'
+                        arcpy.UploadServiceDefinition_server(sd_file, source_service.federated_server)
                     except Exception as e:
+                        # TODO: Include a recovery point here
                         source_service.transferred = False
                         source_service.transferred_comment = 'Error in publish service definition msg: {}'.format(
                             str(e))
+                        print(str(e))
                     # </editor-fold>
 
 
@@ -592,6 +669,5 @@ def report_to_csv(service_transporters, csv_file):
         v.append(t.service_overview())
     df = pd.DataFrame(v)
     df.to_csv(csv_file, encoding='utf-8', sep='|')
-
 
 

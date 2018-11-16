@@ -15,7 +15,7 @@ def create_service_dec(project, portal, user, password, slice_):
         my_gis = arcgis.GIS(portal, user, password)
         server = my_gis.admin.servers.list()[0]
         for s in slice_:
-            processing_mapservice(arcgis_proj, server, s)
+            processing_mapservice(arcgis_proj)
 
 
 def main(portal_source, user_source, password_source, portal_target, user_target, password_target, services_folder_path,
